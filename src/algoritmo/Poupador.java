@@ -4,147 +4,161 @@ package algoritmo;
 import java.awt.Point;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map.Entry;
 
 import controle.Constantes;
 
 public class Poupador extends ProgramaPoupador {
 
-	// Constantes da matriz de visão
-	private static final int SEM_VISAO = -2;
-	private static final int FORA_AMBIENTE = -1;
-	private static final int PAREDE = 1;
-	private static final int BANCO = 3;
-	private static final int MOEDA = 4;
-	private static final int PASTILHA_PODER = 5;
-	private int[] pesos;
-	private ArrayList<Integer> esquerda;
-	private ArrayList<Integer> cima;
-	private ArrayList<Integer> direita;
-	private ArrayList<Integer> baixo;
-	private ArrayList<Integer> perto;
+	enum Opcoes {
+		SEM_VISAO(-2), FORA_DO_AMBIENTE(-1), CELULA_VAZIA(0), PAREDE(1), BANCO(3), MOEDA(4), PASTILHA_DO_PODER(
+				5), POUPADOR(100), LADRAO(200), PESO_POR_VISITA(-50), PASSEOU_NO_MAPA(20);
+
+		Opcoes(int valor) {
+			this.valor = valor;
+		}
+
+		private int valor;
+
+		public int getValor() {
+			return valor;
+		}
+	}
+
+	private final Collection<Integer> cima = Arrays.asList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+	private final Collection<Integer> direita = Arrays.asList(12, 13, 3, 4, 8, 9, 17, 18, 22, 23);
+	private final Collection<Integer> baixo = Arrays.asList(14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
+	private final Collection<Integer> esquerda = Arrays.asList(10, 11, 0, 1, 5, 6, 14, 15, 19, 20);
+	private final List<Integer> possibilidades = Arrays.asList(6, 7, 8, 11, 12, 15, 16, 17);
+	private final HashMap<Point, Integer> locaisVisitados = new HashMap<Point, Integer>();
+	private final HashMap<String, Integer> mapa = new HashMap<String, Integer>();
 	private int[] visao;
-	private HashMap<Point, Integer> pontosVisitados;
-	private HashMap<String, Integer> mapa;
+	private int[] pesos;
 	private Point pontoAnterior;
 	private int acaoAnterior;
-	private ArrayList<Integer> acoesAnteriores;
+	private final ArrayList<Integer> historico = new ArrayList<Integer>();
 	private int tempoSemPegarMoedas;
-	private int moedasAnteriores;
-
-	public Poupador() {
-		acoesAnteriores = new ArrayList<Integer>();
-		mapa = new HashMap<String, Integer>();
-		this.pontosVisitados = new HashMap<Point, Integer>();
-		esquerda = new ArrayList<Integer>(Arrays.asList(10, 11, 0, 1, 5, 6, 14, 15, 19, 20));
-		cima = new ArrayList<Integer>(Arrays.asList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9));
-		direita = new ArrayList<Integer>(Arrays.asList(12, 13, 3, 4, 8, 9, 17, 18, 22, 23));
-		baixo = new ArrayList<Integer>(Arrays.asList(14, 15, 16, 17, 18, 19, 20, 21, 22, 23));
-		perto = new ArrayList<Integer>(Arrays.asList(6, 7, 8, 11, 12, 15, 16, 17));
-	}
+	private int historicoDeMoedas;
 
 	public int acao() {
-		this.pesos = new int[24];
-		reduzirTimeStampMapa();
-		pesoPontoAtual(sensor.getPosicao());
-		analisarLocaisVisitados();
-		analisarVisao();
-		analisarOlfato(sensor.getAmbienteOlfatoLadrao(), true);
-		analisarOlfato(sensor.getAmbienteOlfatoPoupador(), false);
-		return decidirMovimento();
+		pesos = new int[24]; // Agente tem 24 possibilidades.
+		reduzirOTempoNoMapa();
+		pesoAtual(sensor.getPosicao());
+		carregarHistoricoDeVisitacao();
+		olharOAmbiente();
+		usarOOlfato();
+		return movimentar();
 	}
 
-	// reduz o peso do ponto atual
-	private void pesoPontoAtual(Point p) {
-		if (pontosVisitados.containsKey(p)) {
-			int peso = pontosVisitados.get(p);
-			peso -= 50;
-			pontosVisitados.put(p, peso);
-		} else {
-			pontosVisitados.put(p, -50);
-		}
-		mapa.put(sensor.getPosicao().x + "" + sensor.getPosicao().y, 20);
+	/**
+	 * Verifico por onde eu já passei, e vou removendo essas possibilidades do mapa.
+	 */
+	private void reduzirOTempoNoMapa() {
+		List<String> removidos = new ArrayList<String>();
+		mapa.forEach((k, v) -> {
+			v = v - 1;
+			if (v == 0) {
+				removidos.add(k);
+			}
+		});
+		removidos.forEach((v) -> mapa.remove(v));
 	}
 
-	// torna mais difícil a visitação de pontos já visitados
-	private void analisarLocaisVisitados() {
+	/**
+	 * Verifica o peso atual, baseado no nas experiências.
+	 * 
+	 * @param p
+	 */
+	private void pesoAtual(Point p) {
+		if (locaisVisitados.containsKey(p))
+			locaisVisitados.put(p, locaisVisitados.get(p) - Opcoes.PESO_POR_VISITA.getValor());
+		else // Colocamos negativo para, pois passamos por ele.
+			locaisVisitados.put(p, Opcoes.PESO_POR_VISITA.getValor());
+
+		mapa.put(sensor.getPosicao().x + "" + sensor.getPosicao().y, Opcoes.PASSEOU_NO_MAPA.getValor());
+	}
+
+	/**
+	 * Carrega o historico de visitas
+	 */
+	private void carregarHistoricoDeVisitacao() {
 		Point p = sensor.getPosicao();
 		Point cima = new Point(p.x, p.y - 1);
 		Point baixo = new Point(p.x, p.y + 1);
 		Point esquerda = new Point(p.x - 1, p.y);
 		Point direita = new Point(p.x + 1, p.y);
-		pesos[7] += (mapa.get(cima.x + "" + cima.y) == null ? 0 : -50 * mapa.get(cima.x + "" + cima.y));
-		pesos[12] += (mapa.get(direita.x + "" + cima.y) == null ? 0 : -50 * mapa.get(direita.x + "" + cima.y));
-		pesos[16] += (mapa.get(baixo.x + "" + baixo.y) == null ? 0 : -50 * mapa.get(baixo.x + "" + baixo.y));
-		pesos[11] += (mapa.get(esquerda.x + "" + esquerda.y) == null ? 0 : -50 * mapa.get(esquerda.x + "" + esquerda.y));
-
+		pesos[7] += (mapa.get(cima.x + "" + cima.y) == null ? 0 : calculoDoPeso(cima, cima));
+		pesos[12] += (mapa.get(direita.x + "" + cima.y) == null ? 0 : calculoDoPeso(direita, cima));
+		pesos[16] += (mapa.get(baixo.x + "" + baixo.y) == null ? 0 : calculoDoPeso(baixo, baixo));
+		pesos[11] += (mapa.get(esquerda.x + "" + esquerda.y) == null ? 0 : calculoDoPeso(esquerda, esquerda));
 	}
 
-	// seta os pesos de acordo com a visão do agente
+	private int calculoDoPeso(Point point, Point point2) {
+		return Opcoes.PESO_POR_VISITA.getValor() * mapa.get(point.x + "" + point2.y);
+	}
 
-	public void analisarVisao() {
-		// as posições do campo de visão, numeradas de 0 a 23 assim como no PDF
-		// do trabalho
+	public void olharOAmbiente() {
 		visao = sensor.getVisaoIdentificacao();
 		for (int i = 0; i < visao.length; i++) {
 			switch (visao[i]) {
-			case SEM_VISAO:
-				this.pesos[i] += -200;
+			case 5: // Pastilha do poder
+				pesos[i] += -800;
 				break;
-			case FORA_AMBIENTE:
-				this.pesos[i] += -600;
+			case 4: // Moeda
+				pesos[i] += 2600;
 				break;
-			case PAREDE:
-				this.pesos[i] += -600;
+			case 3: // Banco
+				pesos[i] += 500 * (sensor.getNumeroDeMoedas());
 				break;
-			case BANCO:
-				this.pesos[i] += 500 * (sensor.getNumeroDeMoedas());
+			case 1: // Parede
+				pesos[i] += -600;
 				break;
-			case MOEDA:
-				this.pesos[i] += 2600;
+			case -1: // Fora do Ambiente
+				pesos[i] += -600;
 				break;
-			case PASTILHA_PODER:
-				this.pesos[i] += -800;
+			case -2: // Sem visão
+				pesos[i] += -200;
+				break;
 			default:
 				if (visao[i] >= 100) {
-					// é outro poupador ou um ladrão
-
 					if (sensor.getNumeroDeMoedas() == 0) {
-						this.pesos[i] += 2000;
+						pesos[i] += 2000;
 					} else {
-						this.pesos[i] += -12000;
+						pesos[i] += -12000;
 					}
-
 				} else {
-					this.pesos[i] += -5;
+					pesos[i] += -5;
 				}
-				break;
 			}
-
 		}
 	}
 
-	public void analisarOlfato(int[] olfato, boolean ladrao) {
-		if (ladrao) {
-			for (int i = 0; i < olfato.length; i++) {
-				this.pesos[perto.get(i)] += (olfato[i] == 0) ? 1000 : -1000 * (5 - olfato[i]);
-				if (sensor.getNumeroDeMoedas() == 0) {
-					this.pesos[perto.get(i)] += (2000 * (5 - olfato[i]));
-				}
-			}
-		} else {
-			for (int i = 0; i < olfato.length; i++) {
-				this.pesos[perto.get(i)] += (olfato[i] == 0) ? 1000 : (-500 * (5 - olfato[i]));
-			}
-		}
-
+	private void usarOOlfato() {
+		usarOOlfatoLadrao();
+		usarOOlfatoPoupador();
 	}
 
-	public int decidirMovimento() {
+	private void usarOOlfatoLadrao() {
+		int[] olfato = sensor.getAmbienteOlfatoLadrao();
+		for (int i = 0; i < olfato.length; i++) {
+			pesos[possibilidades.get(i)] += (olfato[i] == 0) ? 1000 : -1000 * (5 - olfato[i]);
+			if (sensor.getNumeroDeMoedas() == 0) {
+				pesos[possibilidades.get(i)] += (2000 * (5 - olfato[i]));
+			}
+		}
+	}
 
-		if ((moedasAnteriores == sensor.getNumeroDeMoedas()) && (sensor.getNumeroDeMoedas() > 0)) {
+	private void usarOOlfatoPoupador() {
+		int[] olfato = sensor.getAmbienteOlfatoPoupador();
+		for (int i = 0; i < olfato.length; i++) {
+			pesos[possibilidades.get(i)] += (olfato[i] == 0) ? 1000 : (-500 * (5 - olfato[i]));
+		}
+	}
+
+	public int movimentar() {
+		if ((historicoDeMoedas == sensor.getNumeroDeMoedas()) && (sensor.getNumeroDeMoedas() > 0)) {
 			tempoSemPegarMoedas++;
 		} else {
 			tempoSemPegarMoedas = 0;
@@ -180,13 +194,12 @@ public class Poupador extends ProgramaPoupador {
 		// se a ação anterior foi ineficaz, reduz o peso para ela
 
 		if ((pontoAnterior != null) && (pontoAnterior.equals(sensor.getPosicao()))) {
-			acoesAnteriores.add(acaoAnterior);
-			for (int i : acoesAnteriores) {
+			historico.add(acaoAnterior);
+			for (int i : historico) {
 				pesosDirecao[i - 1] += -6000;
 			}
-
 		} else {
-			acoesAnteriores.clear();
+			historico.clear();
 		}
 
 		int maiorPeso = -999999;
@@ -215,11 +228,11 @@ public class Poupador extends ProgramaPoupador {
 
 		pontoAnterior = sensor.getPosicao();
 		acaoAnterior = direcao;
-		moedasAnteriores = sensor.getNumeroDeMoedas();
+		historicoDeMoedas = sensor.getNumeroDeMoedas();
 
 		/*
-		 * os valores de retorno são 0: ficar parado 1: ir pra cima 2: ir pra
-		 * baixo 3: ir pra direita 4: ir pra esquerda
+		 * os valores de retorno são 0: ficar parado 1: ir pra cima 2: ir pra baixo 3:
+		 * ir pra direita 4: ir pra esquerda
 		 */
 
 		// System.out.println(direcao + " " + pesoCima + " " + pesoBaixo + " " +
@@ -229,28 +242,9 @@ public class Poupador extends ProgramaPoupador {
 			return 0;
 		}
 		return direcao;
-
 	}
 
-	private int pesoObstaculo(int posicao) {
-
-		if ((visao[posicao] == PAREDE) || (visao[posicao] == FORA_AMBIENTE) || (visao[posicao] >= 100)) {
-			return -5000;
-		}
-
-		if ((visao[posicao] == PASTILHA_PODER)) {
-			return -6000;
-		}
-
-		if ((visao[posicao] == BANCO) && (sensor.getNumeroDeMoedas() == 0)) {
-			return -5000;
-		}
-
-		return 0;
-
-	}
-
-	private int somarPesos(ArrayList<Integer> direcao) {
+	private int somarPesos(Collection<Integer> direcao) {
 		int soma = 0;
 		for (int i : direcao) {
 			soma += pesos[i];
@@ -258,16 +252,16 @@ public class Poupador extends ProgramaPoupador {
 		return soma;
 	}
 
-	private void reduzirTimeStampMapa() {
-		List<String> removidos = new ArrayList<String>();
-		for (Entry<String, Integer> entry : mapa.entrySet()) {
-			entry.setValue(entry.getValue() - 1);
-			if (entry.getValue() == 0) {
-				removidos.add(entry.getKey());
-			}
-		}
-		for (String string : removidos) {
-			mapa.remove(string);
+	private int pesoObstaculo(int posicao) {
+		if ((visao[posicao] == Opcoes.PAREDE.getValor()) || (visao[posicao] == Opcoes.FORA_DO_AMBIENTE.getValor())
+				|| (visao[posicao] >= 100)) {
+			return -5000;
+		} else if ((visao[posicao] == Opcoes.PASTILHA_DO_PODER.getValor())) {
+			return -6000;
+		} else if ((visao[posicao] == Opcoes.BANCO.getValor()) && (sensor.getNumeroDeMoedas() == 0)) {
+			return -5000;
+		} else {
+			return 0;
 		}
 	}
 }
